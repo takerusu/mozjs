@@ -93,7 +93,7 @@ class MemoTable {
     this.CountInvalidated = 0;
   }
 
-  setMemo() {
+  setMemo(pos: number, memoPoint: number, failed: boolean, result, consumed: number, stateValue: number) {
     throw new Error("not implement setmemo");
   }
 
@@ -101,7 +101,7 @@ class MemoTable {
     throw new Error("not implement getmemo");
   }
 
-  getMemo2(): MemoEntry {
+  getMemo2(pos: number, memoPoint: number, stateValue: number): MemoEntry {
     throw new Error("not implement getmemo2");
   }
 
@@ -116,7 +116,7 @@ class NullTable extends MemoTable {
     this.CountStored += 1;
   }
 
-  getMemo(pos: number, memoPoint: number) {
+  getMemo() {
     return null;
   }
 
@@ -127,14 +127,62 @@ class NullTable extends MemoTable {
 
 class ElasticTable extends MemoTable {
   private memoArray: MemoEntryKey[];
+  private size: number;
   private shift: number;
 
-  constructor(len: number, w: number, n:number) {
+  constructor(n: number) {
     super();
-    this.memoArray = new Array<MemoEntryKey>();
+    this.memoArray = [];
+    this.size = 32 * n + 1;
+    this.shift = (Math.log(n) / Math.log(2.0)) + 1;
+    this.initStat();
+  }
+
+  longkey(pos: number, memoPoint: number, shift: number) {
+    return ((pos << shift) | memoPoint);
+  }
+
+  setMemo(pos: number, memoPoint: number, failed: boolean, result, consumed: number, stateValue: number) {
+    var key = this.longkey(pos, memoPoint, this.shift);
+    var hash = key % this.size;
+    var m = new MemoEntryKey();
+    this.memoArray[hash] = m;
+    m.key = key;
+    m.failed = failed;
+    m.result = result;
+    m.consumed = consumed;
+    m.stateValue = stateValue;
+    this.CountStored += 1;
   }
 
   getMemo(pos: number, memoPoint: number) {
+    var key = this.longkey(pos, memoPoint, this.shift);
+    var hash = key % this.size;
+    var m = this.memoArray[hash];
+    if(m === undefined) {
+      return null;
+    }
+    if(m.key === key) {
+      this.CountUsed += 1;
+      return m;
+    }
+    return null;
+  }
+
+  getMemo2(pos: number, memoPoint: number, stateValue: number) {
+    var key = this.longkey(pos, memoPoint, this.shift);
+    var hash = key % this.memoArray.length;
+    var m = this.memoArray[hash];
+    if(m === undefined) {
+      return null;
+    }
+    if(m.key === key) {
+      if(m.stateValue === stateValue) {
+        this.CountUsed += 1;
+        return m;
+      }
+      this.CountInvalidated += 1;
+    }
     return null;
   }
 }
@@ -306,6 +354,10 @@ class ASTMachine {
 
   latestLinkedNode;
 
+  getLatestLinkedNode() {
+    return this.latestLinkedNode;
+  }
+
   logLink(label: Symbol, node): void {
     this.log(ASTM.Link, 0, label, node);
     this.latestLinkedNode = node;
@@ -431,11 +483,19 @@ class SymbolTable {
   tables: SymbolTableEntry[] = [];
   tableSize: number = 0;
   maxTableSize: number = 0;
-  stateValue: number = 0;
+  _stateValue: number = 0;
   stateCount: number = 0;
 
   savePoint(): number {
     return this.tableSize;
+  }
+
+  get stateValue() {
+    return this._stateValue;
+  }
+
+  set stateValue(s: number) {
+    this.stateValue = s;
   }
 
   rollBack(savePoint: number): void {
@@ -516,9 +576,9 @@ class RuntimeContext {
   private _astMachine: ASTMachine;
   private _symbolTable: SymbolTable;
 
-  constructor(source: string) {
+  constructor(source: string, m: MemoTable) {
     this.source = source;
-    this.init();
+    this.init(m);
   }
 
   get pos() {
@@ -572,7 +632,7 @@ class RuntimeContext {
     return this.pos != this.source.length;
   }
 
-  init(): void {
+  init(memoTable: MemoTable): void {
     this.astMachine = new ASTMachine(this, Tree.NullTree);
     this.symbolTable = new SymbolTable();
     this._pos = 0;
@@ -591,6 +651,7 @@ class RuntimeContext {
     this.stacks[3].value = 0;
     this.usedStackTop = 3;
     this.catchStackTop = 0;
+    this.memoTable = memoTable;
   }
 
   rollback(pos: number): void {
@@ -658,12 +719,12 @@ class RuntimeContext {
 
   memoTable: MemoTable;
 
-  setMemo(): void {
-    this.memoTable.setMemo();
+  setMemo(pos: number, memoId: number, failed: boolean, result, consumed: number, state: boolean): void {
+    this.memoTable.setMemo(pos, memoId, failed, result, consumed, state? this.symbolTable.stateValue : 0);
   }
 
   getMemo(memoId: number, state: boolean): MemoEntry {
-    return state? this.memoTable.getMemo2() : this.memoTable.getMemo(this.pos, memoId);
+    return state? this.memoTable.getMemo2(this.pos, memoId, this.symbolTable.stateValue) : this.memoTable.getMemo(this.pos, memoId);
   }
 
 }
@@ -1066,22 +1127,57 @@ class First extends BranchTable {
   }
 }
 
-// class Lookup extends Branch {
-//   private memoPoint: number;
-//   private state: boolean;
-//
-//   constructor(e: Expression, next: Instruction, state: boolean, memoPoint: number, jump: Instruction) {
-//     super(Moz.Lookup, e, next);
-//     this.jump = jump;
-//     this.memoPoint = memoPoint;
-//     this.state = state;
-//   }
-//
-//   exec(sc: RuntimeContext) {
-//     var entry = sc.getMemo(this.memoPoint, this.state);
-//   }
-//
-// }
+class Lookup extends Branch {
+  private memoPoint: number;
+  private state: boolean;
+
+  constructor(e: Expression, next: Instruction, state: boolean, memoPoint: number, jump: Instruction) {
+    super(Moz.Lookup, e, next);
+    this.jump = jump;
+    this.memoPoint = memoPoint;
+    this.state = state;
+  }
+
+  exec(sc: RuntimeContext) {
+    var entry = sc.getMemo(this.memoPoint, this.state);
+    if(entry !== null) {
+      if(entry.failed) {
+        return sc.fail();
+      }
+      // if(entry.consumed > 5){
+      //   console.log(`Inst: ${this.toString()} pos:${sc.pos}`)
+      //   console.log(entry)
+      // }
+      sc.consume(entry.consumed);
+      return this.jump;
+    }
+    return this.next;
+  }
+}
+
+class Memo extends MozInstruction {
+  constructor(e: Expression, next: Instruction, private state: boolean, private memoPoint: number) {
+    super(Moz.Memo, e, next);
+  }
+
+  exec(sc: RuntimeContext) {
+    var ppos = sc.popAlt();
+    var length = sc.pos - ppos;
+    sc.setMemo(ppos, this.memoPoint, false, null, length, this.state);
+    return this.next;
+  }
+}
+
+class MemoFail extends MozInstruction {
+  constructor(e: Expression, next: Instruction, private state: boolean, private memoPoint: number) {
+    super(Moz.MemoFail, e, next);
+  }
+
+  exec(sc: RuntimeContext) {
+    sc.setMemo(sc.pos, this.memoPoint, true, null, 0, this.state);
+    return sc.fail();
+  }
+}
 
 class TPush extends MozInstruction {
   constructor(e: Expression, next: Instruction) {
@@ -1223,7 +1319,7 @@ class TMemo extends MozInstruction {
   exec(sc: RuntimeContext) {
     var ppos = sc.popAlt();
     var length = sc.pos - ppos;
-    sc.setMemo();
+    sc.setMemo(ppos, this.memoPoint, false, sc.astMachine.getLatestLinkedNode(), length, this.state);
     return this.next;
   }
 }
@@ -1395,7 +1491,7 @@ class Label extends MozInstruction {
     super(Moz.Label, e, next);
   }
   exec(sc: RuntimeContext) {
-    console.log(`Label: ${this.nonTerminal}`);
+    // console.log(`Label: ${this.nonTerminal}`);
     return this.next;
   }
 }
@@ -1415,6 +1511,7 @@ class MozLoader {
   codeList: Instruction[];
   buf: Buffer;
   pos: number;
+  memoSize: number;
   instSize: number;
   poolNonTerminal: string[];
   poolBset: boolean[][];
@@ -1562,7 +1659,8 @@ class MozLoader {
     console.log(`Version: ${this.read()}`);
     this.instSize = this.read_u16();
     console.log(`InstructionSize: ${this.instSize}`);
-    console.log(`MemoSize: ${this.read_u16()}`);
+    this.memoSize = this.read_u16();
+    console.log(`MemoSize: ${this.memoSize}`);
     console.log(`JumpTableSize: ${this.read_u16()}`);
     var pool = this.read_u16();
     console.log(`NonTerminal: ${pool}`);
@@ -1616,14 +1714,14 @@ class MozLoader {
           inst.jumpTable[j] = this.codeList[inst.jumpTable[j].id];
         }
       }
-      if(inst instanceof Label) {
-        console.log(inst.nonTerminal);
-      } else {
-        console.log(`L${inst.id}  ${inst}`);
-        if(!inst.isCrementedNext()) {
-          console.log(`   jump L${inst.next.id}`);
-        }
-      }
+      // if(inst instanceof Label) {
+      //   console.log(inst.nonTerminal);
+      // } else {
+      //   console.log(`L${inst.id}  ${inst}`);
+      //   if(!inst.isCrementedNext()) {
+      //     console.log(`   jump L${inst.next.id}`);
+      //   }
+      // }
     }
     // console.log(this.codeList);
   }
@@ -1632,7 +1730,7 @@ class MozLoader {
     var opcode = this.uread();
     var jumpNext = ((opcode & 128) == 128);
     opcode = 0b1111111 & opcode;
-    // console.log(`pos = ${this.pos}`);
+    // console.log(`pos = ${this.pos} ${Moz[opcode]}`);
     var inst = this.newInstruction(opcode);
     inst.id = this.codeList.length;
     this.codeList.push(inst);
@@ -1759,22 +1857,22 @@ class MozLoader {
 			jumpTable = this.readJumpTable();
 			return new First(null, null, jumpTable);
 		}
-  	// 	case Moz.Lookup: {
-  	// 		boolean state = this.readState();
-  	// 		int memoPoint = this.readMemoPoint();
-  	// 		Instruction jump = this.readJump();
-  	// 		return new Lookup(null, null, state, memoPoint, jump);
-  	// 	}
-  	// 	case Moz.Memo: {
-  	// 		boolean state = this.readState();
-  	// 		int memoPoint = this.readMemoPoint();
-  	// 		return new Memo(null, null, state, memoPoint);
-  	// 	}
-  	// 	case Moz.MemoFail: {
-  	// 		boolean state = this.readState();
-  	// 		int memoPoint = this.readMemoPoint();
-  	// 		return new MemoFail(null, null, state, memoPoint);
-  	// 	}
+  		case Moz.Lookup: {
+  			state = this.readState();
+  			memoPoint = this.readMemoPoint();
+  			jump = this.readJump();
+  			return new Lookup(null, null, state, memoPoint, jump);
+  		}
+  		case Moz.Memo: {
+  			state = this.readState();
+  			memoPoint = this.readMemoPoint();
+  			return new Memo(null, null, state, memoPoint);
+  		}
+  		case Moz.MemoFail: {
+  			state = this.readState();
+  			memoPoint = this.readMemoPoint();
+  			return new MemoFail(null, null, state, memoPoint);
+  		}
   		case Moz.TPush: {
   			return new TPush(null, null);
   		}
@@ -1890,32 +1988,44 @@ class MozLoader {
 }
 
 var fs = require("fs");
-fs.readFile("../nez-1/symbol.moz", (err, text) => {
+var config = {
+  mozFile: "../nez-1/json.moz",
+  inputFile: "../nez-1/mytest/jsoncoffee/earthquake.geojson",
+  printAST: false,
+  repetition: 10,
+};
+fs.readFile("../nez-1/javascript4.moz", (err, text) => {
+// fs.readFile(config.mozFile, (err, text) => {
   var buf = new Buffer(text, "utf-8");
   var ml = new MozLoader();
   ml.loadCode(buf);
-  // fs.readFile("../nez-1/mytest/jsoncoffee/earthquake.geojson", "utf-8", (err, text) => {
-  fs.readFile("../bench/input/js/backbone.js", "utf-8", (err, text) => {
+  // fs.readFile(config.inputFile, "utf-8", (err, text) => {
+  fs.readFile("../bench/input/js/jquery-2.1.1.js", "utf-8", (err, text) => {
   // fs.readFile("../nez-grammar/csv.nez", "utf-8", (err, text) => {
     // text = `{"abc": 123}`
     // text = `1+2*3`
     // text = `A = B`
-    text = `Apple Orange`
-    var sc = new RuntimeContext(text);
-    var inst = ml.codeList[0];
-    console.time("timer")
-    try {
-      while(true) {
-        // console.log(`Inst: ${inst.toString()} pos:${sc.pos}`)
-        inst = inst.exec(sc);
-        // if(sc.pos > text.length) break;
+    // text = `Apple Apple`
+    console.log(`length: ${text.length}`)
+    for(var i = 0; i < config.repetition; i++) {
+      var sc = new RuntimeContext(text, new ElasticTable(ml.memoSize));
+      var inst = ml.codeList[0];
+      var start = Date.now();
+      try {
+        while(true) {
+          // console.log(`Inst: ${inst.toString()} pos:${sc.pos}`)
+          inst = inst.exec(sc);
+        }
+      } catch(e) {
+        if(config.printAST) {
+          console.log(e);
+          var ast = sc.astMachine.getParseResult();
+          console.log(ast.toString())
+        }
+        // console.log(`pos: ${sc.pos} len: ${text.length}`)
+        var end = Date.now();
+        console.log(`${end - start} ms`);
       }
-    } catch(e) {
-      console.log(e);
-      var ast = sc.astMachine.getParseResult();
-      console.log(ast.toString())
-      console.log(`pos: ${sc.pos} len: ${text.length}`)
-      console.timeEnd("timer")
     }
   });
 });
