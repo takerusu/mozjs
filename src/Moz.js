@@ -1443,8 +1443,7 @@ var Exit = (function (_super) {
     }
     Exit.prototype.exec = function (sc) {
         var ast = sc.astMachine.getParseResult();
-        throw new Error("Exit state:" + this.state);
-        return this;
+        return null;
     };
     return Exit;
 })(MozInstruction);
@@ -1603,7 +1602,6 @@ var MozLoader = (function () {
         this.poolNonTerminal = [];
         for (var i = 0; i < pool; i++) {
             this.poolNonTerminal[i] = this.read_utf8();
-            console.log(this.poolNonTerminal[i]);
         }
         pool = this.read_u16();
         console.log("BitmapSetPool: " + pool);
@@ -1623,7 +1621,6 @@ var MozLoader = (function () {
         this.poolTag = [];
         for (var i = 0; i < pool; i++) {
             this.poolTag[i] = Symbol.tag(this.read_utf8());
-            console.log(this.poolTag[i]);
         }
         pool = this.read_u16();
         console.log("TablePool: " + pool);
@@ -1906,37 +1903,47 @@ var MozLoader = (function () {
     };
     return MozLoader;
 })();
-var fs = require("fs");
-var config = {
-    mozFile: "../nez-1/json.moz",
-    inputFile: "../nez-1/mytest/jsoncoffee/earthquake.geojson",
-    printAST: false,
-    repetition: 10,
-};
-fs.readFile("../nez-1/javascript4.moz", function (err, text) {
-    var buf = new Buffer(text, "utf-8");
-    var ml = new MozLoader();
-    ml.loadCode(buf);
-    fs.readFile("../bench/input/js/jquery-2.1.1.js", "utf-8", function (err, text) {
-        console.log("length: " + text.length);
-        for (var i = 0; i < config.repetition; i++) {
-            var sc = new RuntimeContext(text, new ElasticTable(ml.memoSize));
-            var inst = ml.codeList[0];
-            var start = Date.now();
-            try {
-                while (true) {
-                    inst = inst.exec(sc);
-                }
-            }
-            catch (e) {
-                if (config.printAST) {
-                    console.log(e);
-                    var ast = sc.astMachine.getParseResult();
-                    console.log(ast.toString());
-                }
-                var end = Date.now();
-                console.log((end - start) + " ms");
-            }
+var MozManager = (function () {
+    function MozManager() {
+    }
+    MozManager.prototype.init = function () {
+        var fs = require("fs");
+        this.mozCode = fs.readFileSync(this.config.mozPath);
+        if (this.config.repetition === undefined) {
+            this.config.repetition = 1;
         }
-    });
-});
+        this.input = this.config.inputText;
+        if (this.input === undefined) {
+            this.input = fs.readFileSync(this.config.inputPath, "utf-8");
+        }
+    };
+    MozManager.prototype.parse = function (config) {
+        this.config = config;
+        this.init();
+        var ast;
+        var start, end;
+        var sc;
+        var inst;
+        console.log(config);
+        var ml = new MozLoader();
+        ml.loadCode(this.mozCode);
+        console.log("length: " + this.input.length);
+        for (var i = 0; i < this.config.repetition; i++) {
+            sc = new RuntimeContext(this.input, new ElasticTable(ml.memoSize));
+            inst = ml.codeList[0];
+            start = Date.now();
+            while (inst !== null) {
+                inst = inst.exec(sc);
+            }
+            if (config.printAST) {
+                ast = sc.astMachine.getParseResult();
+                console.log(ast.toString());
+            }
+            end = Date.now();
+            console.log((end - start) + " ms");
+        }
+        return sc.astMachine.getParseResult();
+    };
+    return MozManager;
+})();
+module.exports = new MozManager();
