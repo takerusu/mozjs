@@ -1167,7 +1167,7 @@ var TLeftFold = (function (_super) {
         this.label = label;
     }
     TLeftFold.prototype.exec = function (sc) {
-        sc.astMachine.logLeftFold((sc.pos + this.shift) % 256, this.label);
+        sc.astMachine.logLeftFold(sc.pos - (256 - this.shift) % 256, this.label);
         return this.next;
     };
     return TLeftFold;
@@ -1179,7 +1179,7 @@ var TNew = (function (_super) {
         this.shift = shift;
     }
     TNew.prototype.exec = function (sc) {
-        sc.astMachine.logNew((sc.pos + this.shift) % 256, this.id);
+        sc.astMachine.logNew(sc.pos - (256 - this.shift) % 256, this.id);
         return this.next;
     };
     return TNew;
@@ -1191,7 +1191,7 @@ var TCapture = (function (_super) {
         this.shift = shift;
     }
     TCapture.prototype.exec = function (sc) {
-        sc.astMachine.logCapture((sc.pos + this.shift) % 256);
+        sc.astMachine.logCapture(sc.pos - (256 - this.shift) % 256);
         return this.next;
     };
     return TCapture;

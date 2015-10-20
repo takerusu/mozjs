@@ -1222,7 +1222,7 @@ class TLeftFold extends MozInstruction {
   }
 
   exec(sc: RuntimeContext) {
-    sc.astMachine.logLeftFold((sc.pos + this.shift) % 256, this.label);
+    sc.astMachine.logLeftFold(sc.pos - (256 - this.shift) % 256, this.label);
     return this.next;
   }
 }
@@ -1233,7 +1233,7 @@ class TNew extends MozInstruction {
   }
 
   exec(sc: RuntimeContext) {
-    sc.astMachine.logNew((sc.pos + this.shift) % 256, this.id);
+    sc.astMachine.logNew(sc.pos - (256 - this.shift) % 256, this.id);
     return this.next;
   }
 }
@@ -1244,7 +1244,7 @@ class TCapture extends MozInstruction {
   }
 
   exec(sc: RuntimeContext) {
-    sc.astMachine.logCapture((sc.pos + this.shift) % 256);
+    sc.astMachine.logCapture(sc.pos - (256 - this.shift) % 256);
     return this.next;
   }
 }
