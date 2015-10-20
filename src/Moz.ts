@@ -205,6 +205,7 @@ class Symbol {
 
 class Tree {
   tag: any;
+  label: string[] = [];
 
   constructor(tag: Symbol, public pos, public value, val) {
     if(tag !== null) {
@@ -220,8 +221,9 @@ class Tree {
     s += "#" + this.tag + "[";
     if(Array.isArray(this.value)) {
       s += "\n";
-      for(var i = 0; i < this.value.length; i++) {
-        s += indent + "  " + this.value[i].toString(indent + "  ") + "\n";
+      var l = this.value.length;
+      for(var i = 0; i < l; i++) {
+        s += indent + "  " + `$${this.label[i]} ` + this.value[i].toString(indent + "  ") + "\n";
       }
       s += indent;
     } else {
@@ -239,6 +241,9 @@ class Tree {
   }
 
   link(label: Symbol, child: Tree) {
+    if(label) {
+      this.label.push(label.tagName);
+    }
     if(!(this.value instanceof Array)) {
       this.value = [];
     }
@@ -495,7 +500,7 @@ class SymbolTable {
   }
 
   set stateValue(s: number) {
-    this.stateValue = s;
+    this._stateValue = s;
   }
 
   rollBack(savePoint: number): void {
@@ -613,7 +618,17 @@ class RuntimeContext {
     if(pos === this.source.length) {
       return 0;
     }
-    return this.source.charCodeAt(pos);
+    var n = this.source.charCodeAt(pos);
+    var n16 = n.toString(16);
+    if(n16.length > 2) {
+      var l = 1;
+      if(n16.length > 3) {
+        l = 2;
+      }
+      // console.log(this.source[this.pos])
+      return parseInt(n16.slice(1, l) ,16);
+    }
+    return n;
   }
 
   match(pos: number, str: string): boolean {
@@ -1207,7 +1222,7 @@ class TLeftFold extends MozInstruction {
   }
 
   exec(sc: RuntimeContext) {
-    sc.astMachine.logLeftFold(sc.pos + this.shift, this.label);
+    sc.astMachine.logLeftFold((sc.pos + this.shift) % 256, this.label);
     return this.next;
   }
 }
@@ -1218,7 +1233,7 @@ class TNew extends MozInstruction {
   }
 
   exec(sc: RuntimeContext) {
-    sc.astMachine.logNew(sc.pos + this.shift, this.id);
+    sc.astMachine.logNew((sc.pos + this.shift) % 256, this.id);
     return this.next;
   }
 }
@@ -1229,7 +1244,7 @@ class TCapture extends MozInstruction {
   }
 
   exec(sc: RuntimeContext) {
-    sc.astMachine.logCapture(sc.pos + this.shift);
+    sc.astMachine.logCapture((sc.pos + this.shift) % 256);
     return this.next;
   }
 }
@@ -1408,7 +1423,10 @@ class SMatch extends MozInstruction {
 
   exec(sc: RuntimeContext) {
     var t = sc.symbolTable.getSymbol(this.table);
-    if(t !== null && sc.match(sc.pos, t)) {
+    if(t === null) {
+      return this.next;
+    }
+    if(sc.match(sc.pos, t)) {
       sc.consume(t.length);
       return this.next;
     }
@@ -1650,52 +1668,50 @@ class MozLoader {
     return table;
   }
 
-  loadCode(buf: Buffer) {
+  loadCode(buf: Buffer, debug: boolean) {
     this.buf = buf;
     if(this.read() !== "N" || this.read() !== "E" || this.read() !== "Z") {
       throw new Error("non moz format");
     }
-    console.log("load moz File...");
-    console.log(`Version: ${this.read()}`);
+    var version = this.read();
     this.instSize = this.read_u16();
-    console.log(`InstructionSize: ${this.instSize}`);
     this.memoSize = this.read_u16();
-    console.log(`MemoSize: ${this.memoSize}`);
-    console.log(`JumpTableSize: ${this.read_u16()}`);
+    var jumpTableSize = this.read_u16();
     var pool = this.read_u16();
-    console.log(`NonTerminal: ${pool}`);
     this.poolNonTerminal = [];
     for(var i = 0; i < pool; i++) {
       this.poolNonTerminal[i] = this.read_utf8();
       // console.log(this.poolNonTerminal[i]);
     }
     pool = this.read_u16();
-    console.log(`BitmapSetPool: ${pool}`);
     this.poolBset = [[]];
     for(var i = 0; i < pool; i++) {
       this.poolBset[i] = this.read_bytemap();
     }
-    console.log(`pos= ${this.pos}`);
     pool = this.read_u16();
-    console.log(`StringPool: ${pool}`);
     this.poolBstr = [];
     for(var i = 0; i < pool; i++) {
       this.poolBstr[i] = this.read_utf8();
     }
     pool = this.read_u16();
-    console.log(`SymbolPool: ${pool}`);
     this.poolTag = [];
     for(var i = 0; i < pool; i++) {
       this.poolTag[i] = Symbol.tag(this.read_utf8());
       // console.log(this.poolTag[i]);
     }
     pool = this.read_u16();
-    console.log(`TablePool: ${pool}`);
     this.poolTable = [];
     for(var i = 0; i < pool; i++) {
       this.poolTable[i] = Symbol.tag(this.read_utf8());
     }
-    console.log(`pos= ${this.pos}`);
+    if(debug) {
+      console.log("load moz File...");
+      console.log(`Version: ${version}`);
+      console.log(`InstructionSize: ${this.instSize}`);
+      console.log(`MemoSize: ${this.memoSize}`);
+      console.log(`JumpTableSize: ${jumpTableSize}`);
+      console.log(`pos= ${this.pos}`);
+    }
     this.codeList = [];
     for(var i = 0; i < this.instSize; i++) {
       this.loadInstruction();
@@ -1990,13 +2006,20 @@ class MozLoader {
 class MozManager {
   init() {
     var fs = require("fs");
-    this.mozCode = fs.readFileSync(this.config.mozPath);
     if(this.config.repetition === undefined) {
       this.config.repetition = 1;
     }
     this.input = this.config.inputText;
     if(this.input === undefined) {
       this.input = fs.readFileSync(this.config.inputPath, "utf-8");
+    }
+    if(!this.config.mozInstruction) {
+      this.mozCode = fs.readFileSync(this.config.mozPath);
+      var ml = new MozLoader();
+      this.config.debug = this.config.debug ? this.config.debug : false;
+      ml.loadCode(this.mozCode, this.config.debug);
+      this.config.mozInstruction = ml.codeList;
+      this.config.memoSize = ml.memoSize;
     }
   }
   config;
@@ -2005,25 +2028,26 @@ class MozManager {
 
   parse(config: {
     mozPath: string,
+    mozInstruction?: Instruction[],
+    memoSize?: number,
     inputPath?: string,
     inputText?: string,
     printAST?: boolean,
+    debug?: boolean,
     repetition?: number,
   }) {
     this.config = config;
     this.init();
-    var ast: Tree;
-    var start, end:number;
-    var sc: RuntimeContext;
-    var inst: Instruction;
-    console.log(config)
+    var ast: Tree,
+        start, end:number,
+        sc: RuntimeContext,
+        inst: Instruction;
+    // console.log(config)
 
-    var ml = new MozLoader();
-    ml.loadCode(this.mozCode);
-    console.log(`length: ${this.input.length}`)
+    // console.log(`length: ${this.input.length}`)
     for(var i = 0; i < this.config.repetition; i++) {
-      sc = new RuntimeContext(this.input, new ElasticTable(ml.memoSize));
-      inst = ml.codeList[0];
+      sc = new RuntimeContext(this.input, new ElasticTable(this.config.memoSize));
+      inst = this.config.mozInstruction[0];
       start = Date.now();
       while(inst !== null) {
         // console.log(`Inst: ${inst.toString()} pos:${sc.pos}`)
@@ -2032,10 +2056,10 @@ class MozManager {
       if(config.printAST) {
         ast = sc.astMachine.getParseResult();
         console.log(ast.toString());
+        end = Date.now();
+        console.log(`${end - start} ms`);
       }
       // console.log(`pos: ${sc.pos} len: ${this.input.length}`)
-      end = Date.now();
-      console.log(`${end - start} ms`);
     }
   return sc.astMachine.getParseResult();
   }

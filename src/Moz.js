@@ -200,6 +200,7 @@ var Tree = (function () {
     function Tree(tag, pos, value, val) {
         this.pos = pos;
         this.value = value;
+        this.label = [];
         if (tag !== null) {
             this.tag = tag.tagName;
         }
@@ -213,8 +214,9 @@ var Tree = (function () {
         s += "#" + this.tag + "[";
         if (Array.isArray(this.value)) {
             s += "\n";
-            for (var i = 0; i < this.value.length; i++) {
-                s += indent + "  " + this.value[i].toString(indent + "  ") + "\n";
+            var l = this.value.length;
+            for (var i = 0; i < l; i++) {
+                s += indent + "  " + ("$" + this.label[i] + " ") + this.value[i].toString(indent + "  ") + "\n";
             }
             s += indent;
         }
@@ -229,6 +231,9 @@ var Tree = (function () {
         return new Tree(tag, position, source.slice(pos, epos), value);
     };
     Tree.prototype.link = function (label, child) {
+        if (label) {
+            this.label.push(label.tagName);
+        }
         if (!(this.value instanceof Array)) {
             this.value = [];
         }
@@ -453,7 +458,7 @@ var SymbolTable = (function () {
             return this._stateValue;
         },
         set: function (s) {
-            this.stateValue = s;
+            this._stateValue = s;
         },
         enumerable: true,
         configurable: true
@@ -565,7 +570,16 @@ var RuntimeContext = (function () {
         if (pos === this.source.length) {
             return 0;
         }
-        return this.source.charCodeAt(pos);
+        var n = this.source.charCodeAt(pos);
+        var n16 = n.toString(16);
+        if (n16.length > 2) {
+            var l = 1;
+            if (n16.length > 3) {
+                l = 2;
+            }
+            return parseInt(n16.slice(1, l), 16);
+        }
+        return n;
     };
     RuntimeContext.prototype.match = function (pos, str) {
         if (pos + str.length > this.source.length) {
@@ -1153,7 +1167,7 @@ var TLeftFold = (function (_super) {
         this.label = label;
     }
     TLeftFold.prototype.exec = function (sc) {
-        sc.astMachine.logLeftFold(sc.pos + this.shift, this.label);
+        sc.astMachine.logLeftFold((sc.pos + this.shift) % 256, this.label);
         return this.next;
     };
     return TLeftFold;
@@ -1165,7 +1179,7 @@ var TNew = (function (_super) {
         this.shift = shift;
     }
     TNew.prototype.exec = function (sc) {
-        sc.astMachine.logNew(sc.pos + this.shift, this.id);
+        sc.astMachine.logNew((sc.pos + this.shift) % 256, this.id);
         return this.next;
     };
     return TNew;
@@ -1177,7 +1191,7 @@ var TCapture = (function (_super) {
         this.shift = shift;
     }
     TCapture.prototype.exec = function (sc) {
-        sc.astMachine.logCapture(sc.pos + this.shift);
+        sc.astMachine.logCapture((sc.pos + this.shift) % 256);
         return this.next;
     };
     return TCapture;
@@ -1369,7 +1383,10 @@ var SMatch = (function (_super) {
     }
     SMatch.prototype.exec = function (sc) {
         var t = sc.symbolTable.getSymbol(this.table);
-        if (t !== null && sc.match(sc.pos, t)) {
+        if (t === null) {
+            return this.next;
+        }
+        if (sc.match(sc.pos, t)) {
             sc.consume(t.length);
             return this.next;
         }
@@ -1585,50 +1602,48 @@ var MozLoader = (function () {
         }
         return table;
     };
-    MozLoader.prototype.loadCode = function (buf) {
+    MozLoader.prototype.loadCode = function (buf, debug) {
         this.buf = buf;
         if (this.read() !== "N" || this.read() !== "E" || this.read() !== "Z") {
             throw new Error("non moz format");
         }
-        console.log("load moz File...");
-        console.log("Version: " + this.read());
+        var version = this.read();
         this.instSize = this.read_u16();
-        console.log("InstructionSize: " + this.instSize);
         this.memoSize = this.read_u16();
-        console.log("MemoSize: " + this.memoSize);
-        console.log("JumpTableSize: " + this.read_u16());
+        var jumpTableSize = this.read_u16();
         var pool = this.read_u16();
-        console.log("NonTerminal: " + pool);
         this.poolNonTerminal = [];
         for (var i = 0; i < pool; i++) {
             this.poolNonTerminal[i] = this.read_utf8();
         }
         pool = this.read_u16();
-        console.log("BitmapSetPool: " + pool);
         this.poolBset = [[]];
         for (var i = 0; i < pool; i++) {
             this.poolBset[i] = this.read_bytemap();
         }
-        console.log("pos= " + this.pos);
         pool = this.read_u16();
-        console.log("StringPool: " + pool);
         this.poolBstr = [];
         for (var i = 0; i < pool; i++) {
             this.poolBstr[i] = this.read_utf8();
         }
         pool = this.read_u16();
-        console.log("SymbolPool: " + pool);
         this.poolTag = [];
         for (var i = 0; i < pool; i++) {
             this.poolTag[i] = Symbol.tag(this.read_utf8());
         }
         pool = this.read_u16();
-        console.log("TablePool: " + pool);
         this.poolTable = [];
         for (var i = 0; i < pool; i++) {
             this.poolTable[i] = Symbol.tag(this.read_utf8());
         }
-        console.log("pos= " + this.pos);
+        if (debug) {
+            console.log("load moz File...");
+            console.log("Version: " + version);
+            console.log("InstructionSize: " + this.instSize);
+            console.log("MemoSize: " + this.memoSize);
+            console.log("JumpTableSize: " + jumpTableSize);
+            console.log("pos= " + this.pos);
+        }
         this.codeList = [];
         for (var i = 0; i < this.instSize; i++) {
             this.loadInstruction();
@@ -1908,7 +1923,6 @@ var MozManager = (function () {
     }
     MozManager.prototype.init = function () {
         var fs = require("fs");
-        this.mozCode = fs.readFileSync(this.config.mozPath);
         if (this.config.repetition === undefined) {
             this.config.repetition = 1;
         }
@@ -1916,21 +1930,22 @@ var MozManager = (function () {
         if (this.input === undefined) {
             this.input = fs.readFileSync(this.config.inputPath, "utf-8");
         }
+        if (!this.config.mozInstruction) {
+            this.mozCode = fs.readFileSync(this.config.mozPath);
+            var ml = new MozLoader();
+            this.config.debug = this.config.debug ? this.config.debug : false;
+            ml.loadCode(this.mozCode, this.config.debug);
+            this.config.mozInstruction = ml.codeList;
+            this.config.memoSize = ml.memoSize;
+        }
     };
     MozManager.prototype.parse = function (config) {
         this.config = config;
         this.init();
-        var ast;
-        var start, end;
-        var sc;
-        var inst;
-        console.log(config);
-        var ml = new MozLoader();
-        ml.loadCode(this.mozCode);
-        console.log("length: " + this.input.length);
+        var ast, start, end, sc, inst;
         for (var i = 0; i < this.config.repetition; i++) {
-            sc = new RuntimeContext(this.input, new ElasticTable(ml.memoSize));
-            inst = ml.codeList[0];
+            sc = new RuntimeContext(this.input, new ElasticTable(this.config.memoSize));
+            inst = this.config.mozInstruction[0];
             start = Date.now();
             while (inst !== null) {
                 inst = inst.exec(sc);
@@ -1938,9 +1953,9 @@ var MozManager = (function () {
             if (config.printAST) {
                 ast = sc.astMachine.getParseResult();
                 console.log(ast.toString());
+                end = Date.now();
+                console.log((end - start) + " ms");
             }
-            end = Date.now();
-            console.log((end - start) + " ms");
         }
         return sc.astMachine.getParseResult();
     };
