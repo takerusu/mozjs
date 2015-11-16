@@ -233,6 +233,7 @@ var Tree = (function () {
     Tree.prototype.link = function (label, child) {
         if (label) {
             this.label.push(label.tagName);
+            this.label[label.tagName] = child;
         }
         if (!(this.value instanceof Array)) {
             this.value = [];
@@ -515,7 +516,8 @@ var SymbolTable = (function () {
     SymbolTable.prototype.addSymbolMask = function (table) {
         this.push(table, 0, SymbolTable.NullSymbol);
     };
-    SymbolTable.prototype.hash = function (str) {
+    SymbolTable.prototype.hash = function (buf) {
+        var str = buf.toString("utf-8");
         var hashcode = 1;
         for (var i = 0; i < str.length; i++) {
             hashcode = hashcode * 31 + (str.charCodeAt(i) & 0xff);
@@ -529,8 +531,9 @@ var SymbolTable = (function () {
     return SymbolTable;
 })();
 var RuntimeContext = (function () {
-    function RuntimeContext(source, m) {
+    function RuntimeContext(source, buffer, m) {
         this.source = source;
+        this.buffer = buffer;
         this.init(m);
     }
     Object.defineProperty(RuntimeContext.prototype, "pos", {
@@ -564,28 +567,19 @@ var RuntimeContext = (function () {
         configurable: true
     });
     RuntimeContext.prototype.slice = function (start, end) {
-        return this.source.slice(start, end);
+        return this.buffer.slice(start, end);
     };
     RuntimeContext.prototype.byteAt = function (pos) {
         if (pos === this.source.length) {
             return 0;
         }
-        var n = this.source.charCodeAt(pos);
-        var n16 = n.toString(16);
-        if (n16.length > 2) {
-            var l = 1;
-            if (n16.length > 3) {
-                l = 2;
-            }
-            return parseInt(n16.slice(1, l), 16);
-        }
-        return n;
+        return this.buffer[pos];
     };
     RuntimeContext.prototype.match = function (pos, str) {
         if (pos + str.length > this.source.length) {
             return false;
         }
-        return this.source.substr(pos, str.length) === str;
+        return this.buffer.slice(pos, pos + str.length).equals(str);
     };
     RuntimeContext.prototype.consume = function (length) {
         this.pos += length;
@@ -1459,7 +1453,6 @@ var Exit = (function (_super) {
         this.state = state;
     }
     Exit.prototype.exec = function (sc) {
-        var ast = sc.astMachine.getParseResult();
         return null;
     };
     return Exit;
@@ -1525,6 +1518,16 @@ var MozLoader = (function () {
         var n = this.buf.readUInt32BE(this.pos);
         this.pos += 4;
         return n;
+    };
+    MozLoader.prototype.readBuffer = function () {
+        var len = this.read_u16();
+        var s;
+        s = this.buf.slice(this.pos, this.pos + len);
+        this.pos += len;
+        if (this.read_u8() !== 0) {
+            throw new Error("moz format error");
+        }
+        return s;
     };
     MozLoader.prototype.read_utf8 = function () {
         var len = this.read_u16();
@@ -1624,7 +1627,7 @@ var MozLoader = (function () {
         pool = this.read_u16();
         this.poolBstr = [];
         for (var i = 0; i < pool; i++) {
-            this.poolBstr[i] = this.read_utf8();
+            this.poolBstr[i] = this.readBuffer();
         }
         pool = this.read_u16();
         this.poolTag = [];
@@ -1835,7 +1838,7 @@ var MozLoader = (function () {
             }
             case Moz.TReplace: {
                 utf8 = this.readBstr();
-                return new TReplace(null, null, utf8);
+                return new TReplace(null, null, utf8.toString("utf8"));
             }
             case Moz.TStart: {
                 return new TStart(null, null);
@@ -1928,7 +1931,11 @@ var MozManager = (function () {
         }
         this.input = this.config.inputText;
         if (this.input === undefined) {
-            this.input = fs.readFileSync(this.config.inputPath, "utf-8");
+            this.inputBuf = fs.readFileSync(this.config.inputPath);
+            this.input = this.inputBuf.toString("utf-8");
+        }
+        else {
+            this.inputBuf = new Buffer(this.input);
         }
         if (!this.config.mozInstruction) {
             this.mozCode = fs.readFileSync(this.config.mozPath);
@@ -1944,17 +1951,20 @@ var MozManager = (function () {
         this.init();
         var ast, start, end, sc, inst;
         for (var i = 0; i < this.config.repetition; i++) {
-            sc = new RuntimeContext(this.input, new ElasticTable(this.config.memoSize));
+            sc = new RuntimeContext(this.input, this.inputBuf, new ElasticTable(this.config.memoSize));
             inst = this.config.mozInstruction[0];
-            start = Date.now();
+            if (config.debug) {
+                console.time(config.inputPath);
+            }
             while (inst !== null) {
                 inst = inst.exec(sc);
             }
             if (config.printAST) {
                 ast = sc.astMachine.getParseResult();
                 console.log(ast.toString());
-                end = Date.now();
-                console.log((end - start) + " ms");
+            }
+            if (config.debug) {
+                console.timeEnd(config.inputPath);
             }
         }
         return sc.astMachine.getParseResult();

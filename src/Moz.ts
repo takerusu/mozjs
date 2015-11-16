@@ -205,7 +205,7 @@ class Symbol {
 
 class Tree {
   tag: any;
-  label: string[] = [];
+  label: any[] = [];
 
   constructor(tag: Symbol, public pos, public value, val) {
     if(tag !== null) {
@@ -243,6 +243,7 @@ class Tree {
   link(label: Symbol, child: Tree) {
     if(label) {
       this.label.push(label.tagName);
+      this.label[label.tagName] = child;
     }
     if(!(this.value instanceof Array)) {
       this.value = [];
@@ -479,7 +480,7 @@ class SymbolTableEntry {
   stateValue: number;
   table: Symbol;
   code: number;
-  symbol: string;
+  symbol: Buffer;
 }
 
 class SymbolTable {
@@ -514,7 +515,7 @@ class SymbolTable {
     }
   }
 
-  push(table: Symbol, code: number, str: string) {
+  push(table: Symbol, code: number, str: Buffer) {
     var entry =  new SymbolTableEntry();
     this.tables[this.tableSize] = entry;
     this.tableSize++;
@@ -541,7 +542,7 @@ class SymbolTable {
     return null;
   }
 
-  contains(table: Symbol, symbol: string) {
+  contains(table: Symbol, symbol: Buffer) {
     var code = this.hash(symbol);
     for(var i = this.tableSize - 1; i >= 0; i--) {
       var entry = this.tables[i];
@@ -558,7 +559,8 @@ class SymbolTable {
     this.push(table, 0, SymbolTable.NullSymbol);
   }
 
-  hash(str: string) {
+  hash(buf: Buffer) {
+    var str = buf.toString("utf-8");
     var hashcode = 1;
     for(var i = 0; i < str.length; i++) {
       hashcode = hashcode * 31 + (str.charCodeAt(i) & 0xff);
@@ -566,7 +568,7 @@ class SymbolTable {
     return hashcode;
   }
 
-  addSymbol(table: Symbol, str: string) {
+  addSymbol(table: Symbol, str: Buffer) {
     this.push(table, this.hash(str), str);
   }
 
@@ -574,6 +576,7 @@ class SymbolTable {
 
 class RuntimeContext {
   private source: string;
+  private buffer: Buffer;
   private _pos: number;
   private stacks: StackData[];
   private usedStackTop: number;
@@ -581,8 +584,9 @@ class RuntimeContext {
   private _astMachine: ASTMachine;
   private _symbolTable: SymbolTable;
 
-  constructor(source: string, m: MemoTable) {
+  constructor(source: string, buffer: Buffer, m: MemoTable) {
     this.source = source;
+    this.buffer = buffer;
     this.init(m);
   }
 
@@ -611,31 +615,32 @@ class RuntimeContext {
   }
 
   slice(start: number, end: number) {
-    return this.source.slice(start, end);
+    return this.buffer.slice(start, end);
+    // return this.source.slice(start, end);
   }
 
   byteAt(pos: number): number {
     if(pos === this.source.length) {
       return 0;
     }
-    var n = this.source.charCodeAt(pos);
-    var n16 = n.toString(16);
-    if(n16.length > 2) {
-      var l = 1;
-      if(n16.length > 3) {
-        l = 2;
-      }
-      // console.log(this.source[this.pos])
-      return parseInt(n16.slice(1, l) ,16);
-    }
-    return n;
+    // var n = this.source.charCodeAt(pos);
+    // var n16 = n.toString(16);
+    // if(n16.length > 2) {
+    //   var l = 1;
+    //   if(n16.length > 3) {
+    //     l = 2;
+    //   }
+    //   // console.log(this.source[this.pos])
+    //   return parseInt(n16.slice(1, l) ,16);
+    // }
+    return this.buffer[pos];
   }
 
-  match(pos: number, str: string): boolean {
+  match(pos: number, str: Buffer): boolean {
     if(pos + str.length > this.source.length) {
       return false;
     }
-    return this.source.substr(pos, str.length) === str;
+    return this.buffer.slice(pos, pos + str.length).equals(str);
   }
 
   consume(length: number): boolean {
@@ -936,7 +941,7 @@ class Any extends MozInstruction {
 }
 
 class Str extends MozInstruction {
-  constructor(e: Expression, next: Instruction, private str: string) {
+  constructor(e: Expression, next: Instruction, private str: Buffer) {
     super(Moz.Str, e, next);
   }
 
@@ -990,7 +995,7 @@ class NAny extends MozInstruction {
 }
 
 class NStr extends MozInstruction {
-  constructor(e: Expression, next: Instruction, private str: string) {
+  constructor(e: Expression, next: Instruction, private str: Buffer) {
     super(Moz.NStr, e, next);
   }
 
@@ -1042,7 +1047,7 @@ class OAny extends MozInstruction {
 }
 
 class OStr extends MozInstruction {
-  constructor(e: Expression, next: Instruction, private str: string) {
+  constructor(e: Expression, next: Instruction, private str: Buffer) {
     super(Moz.OStr, e, next);
   }
 
@@ -1094,7 +1099,7 @@ class RAny extends MozInstruction {
 }
 
 class RStr extends MozInstruction {
-  constructor(e: Expression, next: Instruction, private str: string) {
+  constructor(e: Expression, next: Instruction, private str: Buffer) {
     super(Moz.RStr, e, next);
   }
 
@@ -1139,6 +1144,14 @@ class First extends BranchTable {
   exec(sc: RuntimeContext) {
     var ch = sc.byteAt(sc.pos);
     return this.jumpTable[ch].exec(sc);
+    // var s = Date.now();
+    // var inst = this.jumpTable[ch].exec(sc);
+    // var e = Date.now();
+    // if(!map[this.jumpTable[ch].opcode]) {
+    //   map[this.jumpTable[ch].opcode] = 0;
+    // }
+    // map[this.jumpTable[ch].opcode] += e - s;
+    // return inst;
   }
 }
 
@@ -1391,7 +1404,7 @@ class SDef extends MozInstruction {
 }
 
 class SIsDef extends MozInstruction {
-  constructor(e: Expression, next: Instruction, private table: Symbol, private str: string) {
+  constructor(e: Expression, next: Instruction, private table: Symbol, private str: Buffer) {
     super(Moz.SIsDef, e, next);
   }
 
@@ -1493,7 +1506,7 @@ class Exit extends MozInstruction {
   }
 
   exec(sc: RuntimeContext) {
-    var ast = sc.astMachine.getParseResult();
+    // var ast = sc.astMachine.getParseResult();
     // console.log(ast.toString());
     // console.log(JSON.stringify(ast, null, "  "));
     // throw new Error(`Exit state:${this.state}`);
@@ -1533,7 +1546,7 @@ class MozLoader {
   instSize: number;
   poolNonTerminal: string[];
   poolBset: boolean[][];
-  poolBstr: string[];
+  poolBstr: Buffer[];
   poolTable: any[];
   poolTag: any[];
 
@@ -1574,6 +1587,17 @@ class MozLoader {
     var n = this.buf.readUInt32BE(this.pos);
     this.pos += 4;
     return n;
+  }
+
+  readBuffer(): Buffer {
+    var len = this.read_u16();
+    var s;
+    s = this.buf.slice(this.pos, this.pos + len);
+    this.pos += len;
+    if(this.read_u8() !== 0) {
+      throw new Error("moz format error");
+    }
+    return s;
   }
 
   read_utf8(): string {
@@ -1691,7 +1715,7 @@ class MozLoader {
     pool = this.read_u16();
     this.poolBstr = [];
     for(var i = 0; i < pool; i++) {
-      this.poolBstr[i] = this.read_utf8();
+      this.poolBstr[i] = this.readBuffer();
     }
     pool = this.read_u16();
     this.poolTag = [];
@@ -1761,7 +1785,7 @@ class MozLoader {
     var jump: Instruction;
     var nonTerminal: string;
     var byteChar: number;
-    var utf8: string;
+    var utf8: Buffer;
     var byteMap;
     var shift;
     var state: boolean;
@@ -1915,7 +1939,7 @@ class MozLoader {
   		}
   		case Moz.TReplace: {
   			utf8 = this.readBstr();
-  			return new TReplace(null, null, utf8);
+  			return new TReplace(null, null, utf8.toString("utf8"));
   		}
   		case Moz.TStart: {
   			return new TStart(null, null);
@@ -2002,6 +2026,7 @@ class MozLoader {
     console.log(this.buf.toJSON());
   }
 }
+// var map = []
 
 class MozManager {
   init() {
@@ -2011,13 +2036,19 @@ class MozManager {
     }
     this.input = this.config.inputText;
     if(this.input === undefined) {
-      this.input = fs.readFileSync(this.config.inputPath, "utf-8");
+      this.inputBuf = fs.readFileSync(this.config.inputPath);
+      this.input = this.inputBuf.toString("utf-8");
+    } else {
+      this.inputBuf = new Buffer(this.input);
     }
     if(!this.config.mozInstruction) {
       this.mozCode = fs.readFileSync(this.config.mozPath);
       var ml = new MozLoader();
       this.config.debug = this.config.debug ? this.config.debug : false;
+      // var s = Date.now()
       ml.loadCode(this.mozCode, this.config.debug);
+      // var e = Date.now()
+      // console.log(`load: ${e-s} ms`)
       this.config.mozInstruction = ml.codeList;
       this.config.memoSize = ml.memoSize;
     }
@@ -2025,6 +2056,7 @@ class MozManager {
   config;
   mozCode: Buffer;
   input: string;
+  inputBuf: Buffer;
 
   parse(config: {
     mozPath: string,
@@ -2046,18 +2078,33 @@ class MozManager {
 
     // console.log(`length: ${this.input.length}`)
     for(var i = 0; i < this.config.repetition; i++) {
-      sc = new RuntimeContext(this.input, new ElasticTable(this.config.memoSize));
+      sc = new RuntimeContext(this.input, this.inputBuf, new ElasticTable(this.config.memoSize));
       inst = this.config.mozInstruction[0];
-      start = Date.now();
-      while(inst !== null) {
-        // console.log(`Inst: ${inst.toString()} pos:${sc.pos}`)
-        inst = inst.exec(sc);
+      if(config.debug) {
+        console.time(config.inputPath);
       }
+      while(inst !== null) {
+      //   // console.log(`Inst: ${inst.toString()} pos:${sc.pos}`)
+      //   var opcode = inst.opcode;
+      //   var t = Date.now();
+        inst = inst.exec(sc);
+      //   var ye = Date.now();
+      //   if(!map[opcode]) {
+      //     map[opcode] = 0;
+      //   }
+      //   map[opcode] += ye - t;
+      //   // map[opcode] += 1;
+      }
+      // map.forEach((m, i) => {
+      //   console.log(`${Moz[i]}: ${m} ms`)
+      //   // console.log(`${Moz[i]}: ${m} times`)
+      // });
       if(config.printAST) {
         ast = sc.astMachine.getParseResult();
         console.log(ast.toString());
-        end = Date.now();
-        console.log(`${end - start} ms`);
+      }
+      if(config.debug) {
+        console.timeEnd(config.inputPath);
       }
       // console.log(`pos: ${sc.pos} len: ${this.input.length}`)
     }
