@@ -2066,6 +2066,7 @@ class MozManager {
     inputText?: string,
     printAST?: boolean,
     debug?: boolean,
+    stat?: boolean,
     repetition?: number,
   }) {
     this.config = config;
@@ -2080,7 +2081,7 @@ class MozManager {
     for(var i = 0; i < this.config.repetition; i++) {
       sc = new RuntimeContext(this.input, this.inputBuf, new ElasticTable(this.config.memoSize));
       inst = this.config.mozInstruction[0];
-      if(config.debug) {
+      if(config.stat) {
         console.time(config.inputPath);
       }
       while(inst !== null) {
@@ -2103,7 +2104,7 @@ class MozManager {
         ast = sc.astMachine.getParseResult();
         console.log(ast.toString());
       }
-      if(config.debug) {
+      if(config.stat) {
         console.timeEnd(config.inputPath);
       }
       // console.log(`pos: ${sc.pos} len: ${this.input.length}`)

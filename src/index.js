@@ -3,7 +3,7 @@ var text = "\n* aaaa\n  - bb\n  - cc";
 var config = {
     mozPath: "../nez-1/nez.moz",
     inputPath: "../nez-1/mytest/nezrule.nez",
-    debug: true,
+    stat: false,
     repetition: 1,
 };
 for (var i = 2; i < process.argv.length; i++) {
@@ -20,6 +20,9 @@ for (var i = 2; i < process.argv.length; i++) {
         case "-n":
             i++;
             config.repetition = parseInt(process.argv[i]);
+            break;
+        case "-s":
+            config.stat = true;
             break;
         default:
     }

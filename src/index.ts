@@ -12,7 +12,7 @@ var config = {
   // inputPath: "../nez-1/mytest/jsoncoffee/earthquake.geojson",
   inputPath: "../nez-1/mytest/nezrule.nez",
   // inputText: text,
-  debug: true,
+  stat: false,
   repetition: 1,
 };
 
@@ -30,6 +30,9 @@ for (var i = 2; i < process.argv.length; i++) {
     case "-n":
       i++;
       config.repetition = parseInt(process.argv[i]);
+      break;
+    case "-s":
+      config.stat = true;
       break;
     default:
 

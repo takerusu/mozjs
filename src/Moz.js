@@ -1953,7 +1953,7 @@ var MozManager = (function () {
         for (var i = 0; i < this.config.repetition; i++) {
             sc = new RuntimeContext(this.input, this.inputBuf, new ElasticTable(this.config.memoSize));
             inst = this.config.mozInstruction[0];
-            if (config.debug) {
+            if (config.stat) {
                 console.time(config.inputPath);
             }
             while (inst !== null) {
@@ -1963,7 +1963,7 @@ var MozManager = (function () {
                 ast = sc.astMachine.getParseResult();
                 console.log(ast.toString());
             }
-            if (config.debug) {
+            if (config.stat) {
                 console.timeEnd(config.inputPath);
             }
         }
